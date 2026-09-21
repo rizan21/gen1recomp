@@ -22,6 +22,10 @@ Game3.__index = Game3
 
 local function noop() end
 
+local function isSave3(save)
+  return save.engine == "game3" or save.version == "firered" or save.generation == 3
+end
+
 Game3.SKIN_FAST_FORWARD = 4
 
 -- pokefirered/src/item_use.c:159 SetUpItemUseOnFieldCallback
@@ -43,7 +47,8 @@ function Game3:_hasContinueSave()
   if not SaveData.load then return false end
   local ok, save = pcall(SaveData.load)
   if not ok or type(save) ~= "table" then return false end
-  return save.engine == "game3" and type(save.map) == "string" and save.map:sub(1, 3) == "FR_"
+  local isGen3 = isSave3(save)
+  return isGen3 and type(save.map) == "string" and save.map:sub(1, 3) == "FR_"
 end
 
 function Game3:_enterField(session, reason)
@@ -369,7 +374,8 @@ function Game3:_handleBootAction(action)
   if not action then return end
   if action.action == "continue" then
     local ok, save = pcall(SaveData.load)
-    if ok and save and save.engine == "game3" then
+    local isGen3 = save and isSave3(save)
+    if ok and save and isGen3 then
       if ModRuntime.wants("save.loading") then
         ModRuntime.emit("save.loading", { raw = save })
       end

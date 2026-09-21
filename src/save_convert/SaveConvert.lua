@@ -22,10 +22,12 @@
 
 local GenSave = require("src.save_convert.GenSave")
 local Gen2Save = require("src.save_convert.Gen2Save")
+local Gen3Save = require("src.save_convert.Gen3Save")
 
 local SaveConvert = {}
 
 SaveConvert.SAVE_SIZE = GenSave.SAVE_SIZE
+SaveConvert.GEN3_SAVE_SIZE = Gen3Save.SAVE_SIZE
 -- Is this a real save for THIS GAME? Dispatches on the generation, because
 -- the two do not share a rule: Gen 1 stores a complement checksum of its main
 -- data block, Gen 2 stores two check values plus a 16-bit sum. Run one over
@@ -34,6 +36,9 @@ SaveConvert.SAVE_SIZE = GenSave.SAVE_SIZE
 -- gameVersion is optional and defaults to Gen 1's rule, which is what every
 -- caller meant before Gen 2 had a codec.
 function SaveConvert.mainChecksumValid(bytes, gameVersion)
+  if gameVersion and Gen3Save.isGen3(gameVersion) then
+    return Gen3Save.checksumValid(bytes)
+  end
   local L = gameVersion and Gen2Save.layoutFor(gameVersion)
   if L then return Gen2Save.checksumValid(bytes, L) end
   return GenSave.mainChecksumValid(bytes)
@@ -234,6 +239,9 @@ end
 -- before Continue, and an export needs that unmodeled data to remain bootable.
 -- Decode warnings are only import diagnostics and do not belong in the slot.
 local function mergeDefaults(decoded, version)
+  if version and Gen3Save.isGen3(version) then
+    return Gen3Save.mergeDefaults(decoded, version)
+  end
   decoded.warnings = nil
   local save = defaultsSave()
   for k, v in pairs(decoded) do save[k] = v end
@@ -276,6 +284,10 @@ function SaveConvert.isGen2Cart(gameVersion)
   return Gen2Save.layoutFor(gameVersion) ~= nil
 end
 
+function SaveConvert.isGen3Cart(gameVersion)
+  return Gen3Save.isGen3(gameVersion)
+end
+
 function SaveConvert.importSupported(gameVersion)
   -- Gen 2 imports through Gen2Save now. Kept as a predicate rather than
   -- deleted: SaveFileIO asks it before it measures the bytes, and export
@@ -303,6 +315,12 @@ function SaveConvert.importSav(bytes, version, gameVersion)
   end
   local supported, unsupportedWhy = SaveConvert.importSupported(gameVersion)
   if not supported then return nil, unsupportedWhy end
+  -- Gen 3 is 128 KiB Flash with SaveBlock1/2/PokemonStorage chunks and its own codec.
+  if Gen3Save.isGen3(gameVersion) then
+    local decoded, gen3Err = Gen3Save.decode(bytes, gameVersion)
+    if not decoded then return nil, gen3Err end
+    return Gen3Save.mergeDefaults(decoded, version or gameVersion)
+  end
   -- Gen 2 is a different SRAM entirely: different bank map, different party
   -- struct, its own check values. Gen2Save owns it, and it needs no crosswalk
   -- tables because it decodes ids the engine already speaks.
@@ -346,6 +364,10 @@ function SaveConvert.exportSav(saveTable, gameVersion, cartImage)
   end
   local supported, unsupportedWhy = SaveConvert.exportSupported(gameVersion)
   if not supported then return nil, unsupportedWhy end
+  -- Gen 3 has its own 128 KiB Flash layout and its own codec.
+  if Gen3Save.isGen3(gameVersion) then
+    return Gen3Save.encode(saveTable, gameVersion, cartImage)
+  end
   -- Gen 2 has its own SRAM and its own codec, and needs no Gen 1 crosswalks.
   if Gen2Save.layoutFor(gameVersion) then
     return Gen2Save.encode(saveTable, gameVersion, cartImage,

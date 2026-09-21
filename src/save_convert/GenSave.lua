@@ -645,7 +645,7 @@ local function encodeItemList(buf, off, capacity, inventory, order, cw)
   local i = 0
   local seen = {}
   local function put(id, qty)
-    if i >= capacity or not qty or qty <= 0 then return end
+    if i >= capacity or type(qty) ~= "number" or qty <= 0 then return end
     local idByte = cw.itemsIndex[id]
     if not idByte then return end
     setByte(buf, off + i * 2, idByte)

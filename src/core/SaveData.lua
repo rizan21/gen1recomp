@@ -2056,8 +2056,16 @@ function SaveData.runMigrations(save, modChains, activeMods)
   end)
   -- every step whose from-format the save has not passed yet runs, in
   -- (from, registration) order; a save at the current format runs none
+  if (save.generation == 3 or save.version == "firered"
+      or (type(save.map) == "string" and save.map:sub(1, 3) == "FR_"))
+     and save.engine ~= "game3" then
+    save.engine = "game3"
+    save.generation = 3
+    if not save.version then save.version = "firered" end
+  end
+  local isGen3 = save.engine == "game3"
   local fmt = (save.meta and save.meta.format) or 1
-  if GameVersion.generation() == 1 then
+  if GameVersion.generation() == 1 and not isGen3 then
     for _, m in ipairs(coreMigrations) do
       if m.from >= fmt then m.fn(save) end
     end

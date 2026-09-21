@@ -52,13 +52,14 @@ local function readCart(version, slotId)
 end
 
 local SAVE_SIZE = SaveConvert.SAVE_SIZE
+local GEN3_SAVE_SIZE = SaveConvert.GEN3_SAVE_SIZE or 131072
 
 -- Resolve raw save bytes from whatever the launcher hands us:
 --   * a LOVE DroppedFile (a table/userdata with :open/:read/:getSize), read the
 --     way RomImporter reads a dropped ROM;
---   * a raw 32768-byte string (the tests and the in-memory path) used as-is;
+--   * a raw 32768-byte or 131072-byte string (the tests and the in-memory path) used as-is;
 --   * any other string treated as an absolute picker path opened with io.open.
--- A picker path is never 32768 bytes long, so the length test disambiguates it
+-- A picker path is never 32768 or 131072 bytes long, so the length test disambiguates it
 -- from a raw image cleanly.  Returns bytes, or nil + an error string.
 local function readSource(source)
   local t = type(source)
@@ -76,7 +77,7 @@ local function readSource(source)
   if t ~= "string" then
     return nil, "no save file was provided"
   end
-  if #source == SAVE_SIZE then
+  if #source == SAVE_SIZE or #source == GEN3_SAVE_SIZE then
     return source
   end
   local f, openErr = io.open(source, "rb")
@@ -118,11 +119,15 @@ function SaveFileIO.importToSlot(source, version, force)
   -- generation's rule.
   local supported, unsupportedWhy = SaveConvert.importSupported(version)
   if not supported then return false, unsupportedWhy end
-  if #bytes ~= SAVE_SIZE then
+  local expectedSize = SaveConvert.isGen3Cart(version) and GEN3_SAVE_SIZE or SAVE_SIZE
+  if #bytes ~= expectedSize then
     local check = SaveConvert.mainChecksumValid(bytes, version)
     if check == nil then
-      return false, ("A save file must be %d bytes (32 KB); this one is %d.")
-        :format(SAVE_SIZE, #bytes)
+      local sizeDesc = SaveConvert.isGen3Cart(version)
+        and "131072 bytes (128 KB)"
+        or ("%d bytes (32 KB)"):format(SAVE_SIZE)
+      return false, ("A save file must be %s; this one is %d.")
+        :format(sizeDesc, #bytes)
     end
     if check == false then
       return false, "save data checksum invalid (main data checksum mismatch)"
@@ -131,12 +136,13 @@ function SaveFileIO.importToSlot(source, version, force)
     -- worth asking about.  On a Gen 2 cart it is the normal shape -- every
     -- real one has the footer -- so asking would be a prompt with one sensible
     -- answer, on every import, forever.
-    if #bytes > SAVE_SIZE and not force
-       and not SaveConvert.isGen2Cart(version) then
+    if #bytes > expectedSize and not force
+       and not SaveConvert.isGen2Cart(version)
+       and not SaveConvert.isGen3Cart(version) then
       return false, nil, { needsConfirm = true, size = #bytes }
     end
-    bytes = #bytes > SAVE_SIZE and bytes:sub(1, SAVE_SIZE)
-      or (bytes .. string.rep("\0", SAVE_SIZE - #bytes))
+    bytes = #bytes > expectedSize and bytes:sub(1, expectedSize)
+      or (bytes .. string.rep("\0", expectedSize - #bytes))
   end
   -- 3rd arg: the crosswalk has to come from THIS game's ROM cache.  The
   -- launcher imports before the cache is mounted on the un-prefixed paths, so
@@ -148,6 +154,10 @@ function SaveFileIO.importToSlot(source, version, force)
   -- the format numerically, so re-stamp it to the current format (the imported
   -- table is already current-shaped, so no migration is skipped by doing so).
   save.version = version
+  if SaveConvert.isGen3Cart(version) then
+    save.engine = "game3"
+    save.generation = 3
+  end
   save.meta = SaveData.buildMeta(nil, save.meta)
   local slotId = SaveData.createSlot(version)
   if not slotId then return false, "this game has no save slots to import into" end
@@ -156,7 +166,9 @@ function SaveFileIO.importToSlot(source, version, force)
     return false, "could not write the imported save: " .. tostring(writeErr)
   end
   SaveData.setActiveSlot(version, slotId)
-  if SaveConvert.isGen2Cart(version) then writeCart(version, slotId, bytes) end
+  if SaveConvert.isGen2Cart(version) or SaveConvert.isGen3Cart(version) then
+    writeCart(version, slotId, bytes)
+  end
   return true, slotId
 end
 
